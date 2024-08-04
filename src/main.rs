@@ -6,6 +6,9 @@ use std::path::Path;
 const CROSS_SYMBOL: char = 'X';
 const NOUGHT_SYMBOL: char = '0';
 
+const USER_MARK: i8 = 1;
+const AI_MARK: i8 = -1;
+
 // HELPER FUNCTIONS
 fn read_file_to_matrix(path: &Path) -> io::Result<Vec<Vec<char>>> {
   let file = File::open(path)?;
@@ -63,6 +66,9 @@ impl Player {
   }
 
   fn play(&mut self, board: &mut Board, x: u8, y: u8) {
+    if board.board[y as usize][x as usize] != 0 {
+      panic!("Invalid play, already taken spot");
+    }
     board.update(self, x, y);
 
     self.history.rows[y as usize] += 1;
@@ -73,6 +79,76 @@ impl Player {
     if x + y != board.size() {
       self.history.anti_diagonal += 1;
     }
+  }
+
+  fn is_winner(&self, board: &Board) -> bool {
+    let board_size = board.size();
+
+    let mark = match self.symbol {
+      CROSS_SYMBOL => USER_MARK,
+      NOUGHT_SYMBOL => AI_MARK,
+      _ => panic!("Invalid player symbol"),
+    };
+
+    for row in 0..board_size {
+      if board.board[row as usize].iter().all(|&cell| cell == mark) {
+        return true;
+      }
+    }
+
+    for col in 0..board_size {
+      if (0..board_size).all(|row| board.board[row as usize][col as usize] == mark) {
+        return true;
+      }
+    }
+
+    if (0..board_size).all(|i| board.board[i as usize][i as usize] == mark) {
+      return true;
+    }
+
+    if (0..board_size).all(|i| board.board[i as usize][(board_size - 1 - i) as usize] == mark) {
+      return true;
+    }
+
+    false
+  }
+}
+
+// AI PLAYER
+#[derive(Debug)]
+struct AI {
+  ai: Player,
+}
+
+impl AI {
+  fn new(symbol: char) -> Self {
+    AI {
+      ai: Player::new(symbol),
+    }
+  }
+
+  fn play(&mut self, board: &mut Board, player: &Player) {
+    let mut best_move = (0_u8, 0_u8);
+    let mut best_value = -100;
+
+    let x_length = board.size();
+    let y_length = board.size();
+
+    for i in 0..x_length {
+      for j in 0..y_length {
+        if board.board[i as usize][j as usize] == 0 {
+          board.board[i as usize][j as usize] = AI_MARK;
+          let value = board.minimax(false, 0, player, &self.ai);
+          board.board[i as usize][j as usize] = 0;
+          if value > best_value {
+            best_value = value;
+            best_move = (j, i);
+          }
+        }
+      }
+    }
+
+    self.ai.play(board, best_move.0, best_move.1);
   }
 }
 
@@ -93,8 +169,8 @@ impl Board {
 
   fn update(&mut self, player: &Player, x: u8, y: u8) {
     let symbol = match player.symbol {
-      CROSS_SYMBOL => 1,
-      NOUGHT_SYMBOL => -1,
+      CROSS_SYMBOL => USER_MARK,
+      NOUGHT_SYMBOL => AI_MARK,
       _ => panic!("Invalid player symbol"),
     };
     self.board[y as usize][x as usize] = symbol;
@@ -136,12 +212,58 @@ impl Board {
   fn terminal(&self) -> bool {
     for y in 0..self.size() {
       for x in 0..self.size() {
-        if self.board[y as usize][x as usize] != 0 {
+        if self.board[y as usize][x as usize] == 0 {
           return false;
         }
       }
     }
+
     true
+  }
+
+  fn minimax(&mut self, is_maximizing: bool, depth: isize, player: &Player, ai: &Player) -> isize {
+    if player.is_winner(self) {
+      return -100 + depth;
+    } else if ai.is_winner(self) {
+      return 100 - depth;
+    } else if self.terminal() {
+      return 0;
+    }
+
+    let x_length = self.size();
+    let y_length = self.size();
+
+    if is_maximizing {
+      let mut best_score = -100;
+      for i in 0..x_length {
+        for j in 0..y_length {
+          if self.board[i as usize][j as usize] == 0 {
+            self.board[i as usize][j as usize] = AI_MARK;
+            let score = self.minimax(false, depth + 1, player, ai);
+            self.board[i as usize][j as usize] = 0;
+            if score > best_score {
+              best_score = score;
+            }
+          }
+        }
+      }
+      best_score
+    } else {
+      let mut best_score = 100;
+      for i in 0..x_length {
+        for j in 0..y_length {
+          if self.board[i as usize][j as usize] == 0 {
+            self.board[i as usize][j as usize] = USER_MARK;
+            let score = self.minimax(true, depth + 1, player, ai);
+            self.board[i as usize][j as usize] = 0;
+            if score < best_score {
+              best_score = score;
+            }
+          }
+        }
+      }
+      best_score
+    }
   }
 }
 
@@ -150,26 +272,40 @@ fn main() -> io::Result<()> {
   let board_path = Path::new("src/board");
   let mut board = Board::new(board_path);
 
-  let mut cross = Player::new('X');
-  let mut nought = Player::new('0');
+  let mut cross = Player::new(CROSS_SYMBOL);
+  let mut nought = AI::new(NOUGHT_SYMBOL);
 
   clear_terminal();
-  loop {
+  let mut round_count = 0;
+  while !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
     board.draw();
 
-    let mut input = String::new();
-    io::stdin()
-      .read_line(&mut input)
-      .expect("Error getting user input");
-    let input = input.trim();
-
-    let (x, y) = convert_input(input);
-    println!("{},{}", x, y);
-    if y >= board.size() || x >= board.size() {
-      panic!("x or y out of bounds");
+    if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
+      let mut input = String::new();
+      io::stdin()
+        .read_line(&mut input)
+        .expect("Error getting user input");
+      let input = input.trim();
+      let (x, y) = convert_input(input);
+      if y >= board.size() || x >= board.size() {
+        panic!("x or y out of bounds");
+      }
+      println!("{},{}", x, y);
+      cross.play(&mut board, x, y);
+      round_count += 1;
     }
-    cross.play(&mut board, x, y);
+    clear_terminal();
+    board.draw();
+
+    if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
+      nought.play(&mut board, &cross);
+      round_count += 1;
+    }
 
     clear_terminal();
   }
+  board.draw();
+  println!("GAME ENDED IN {}", round_count);
+
+  Ok(())
 }
