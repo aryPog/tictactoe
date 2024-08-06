@@ -272,6 +272,21 @@ fn main() -> io::Result<()> {
   let board_path = Path::new("src/board");
   let mut board = Board::new(board_path);
 
+  let mut current_player;
+
+  clear_terminal();
+  let mut input = String::new();
+  println!("First to Move: (p)layer (c)omputer");
+  io::stdin()
+    .read_line(&mut input)
+    .expect("Error getting user input");
+  let input = input.trim();
+  match input {
+    "p" => current_player = USER_MARK,
+    "c" => current_player = AI_MARK,
+    _ => panic!("Invalid first to move"),
+  }
+
   let mut cross = Player::new(CROSS_SYMBOL);
   let mut nought = AI::new(NOUGHT_SYMBOL);
 
@@ -280,28 +295,29 @@ fn main() -> io::Result<()> {
   while !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
     board.draw();
 
-    if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
-      let mut input = String::new();
-      io::stdin()
-        .read_line(&mut input)
-        .expect("Error getting user input");
-      let input = input.trim();
-      let (x, y) = convert_input(input);
-      if y >= board.size() || x >= board.size() {
-        panic!("x or y out of bounds");
+    if current_player == USER_MARK {
+      if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
+        let mut input = String::new();
+        io::stdin()
+          .read_line(&mut input)
+          .expect("Error getting user input");
+        let input = input.trim();
+        let (x, y) = convert_input(input);
+        if y >= board.size() || x >= board.size() {
+          panic!("x or y out of bounds");
+        }
+
+        cross.play(&mut board, x, y);
+        round_count += 1;
       }
-      println!("{},{}", x, y);
-      cross.play(&mut board, x, y);
-      round_count += 1;
+      current_player = AI_MARK;
+    } else if current_player == AI_MARK {
+      if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
+        nought.play(&mut board, &cross);
+        round_count += 1;
+      }
+      current_player = USER_MARK;
     }
-    clear_terminal();
-    board.draw();
-
-    if !board.terminal() && !cross.is_winner(&board) && !nought.ai.is_winner(&board) {
-      nought.play(&mut board, &cross);
-      round_count += 1;
-    }
-
     clear_terminal();
   }
   board.draw();
